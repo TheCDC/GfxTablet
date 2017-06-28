@@ -41,7 +41,8 @@ class ButtonEvent(Event):
 
 
 class PositionManager:
-    """Model for handling relative vs. absolute movement and track button states."""
+    """Model for handling relative vs. absolute movement
+    and track button states."""
 
     def __init__(self, device, aspect_ratio=None):
         if aspect_ratio is None:
@@ -50,28 +51,48 @@ class PositionManager:
                 self.xscale = r[0] / r[1]
             except KeyError:
                 raise ValueError("Sorry, that is an unsupported device.")
-        self.last_pos_event = None
-        self._deltas = [0, 0]
+        self.initial_pen_position = None
+        self.initial_mouse_position = None
+        self._deltas = None
         # only track movement delta when btn id -1 state is 1
         self.button_states = defaultdict(lambda: 0)
+        self.state = 0
 
     def consume(self, event):
+        # import pudb; pudb.set_trace()
+
         if isinstance(event, PositionEvent):
-            if self.last_pos_event is not None:
-                # skip non-relative movement events
-                if self.button_states.get(-1, None) == 1:
-                    self._deltas[0] = (
-                        event.x - self.last_pos_event.x) * self.xscale * HEIGHT / INTMAX
-                    self._deltas[1] = (
-                        event.y - self.last_pos_event.y) * HEIGHT / INTMAX
-            self.last_pos_event = event
+            if self.state == 0:
+                # if pen has begun hovering
+                if self.button_states[-1] == 1:
+
+                    self.initial_pen_position = event
+                    mx, my = pyautogui.position()
+                    self.initial_mouse_position = PositionEvent(mx, my, 0)
+                    self.state = 1
+                    self._deltas = [mx, my]
+            elif self.state == 1:
+                if self.button_states[-1] == 0:
+                    self.state = 0
+                    self._deltas = None
+                    self.initial_mouse_position = None
+                    self.initial_pen_position = None
+                else:
+                    self._deltas[0] = self.initial_mouse_position.x + \
+                        (event.x - self.initial_pen_position.x) * \
+                        self.xscale * HEIGHT / INTMAX
+                    self._deltas[1] = self.initial_mouse_position.y + \
+                        (event.y - self.initial_pen_position.y) * HEIGHT / INTMAX
+
         elif isinstance(event, ButtonEvent):
             self.button_states[event.id] = event.status
-        return tuple(self._deltas)
 
     @property
     def deltas(self):
-        return tuple(self._deltas)
+        try:
+            return tuple(self._deltas)
+        except TypeError:
+            return None
 
 
 def process_line(l):
@@ -104,8 +125,11 @@ def main():
                 e = process_line(line)
                 print(e)
                 movement_manager.consume(e)
-                dx, dy = movement_manager.deltas
-                pyautogui.moveRel(dx, dy, 0)
+                t = movement_manager.deltas
+                # only simulate mouse if movement is valid
+                if t is not None:
+                    dx, dy = t
+                    pyautogui.moveTo(dx, dy, 0)
 
                 if movement_manager.button_states.get(0, None) == 1:
                     pyautogui.mouseDown(button="left")
